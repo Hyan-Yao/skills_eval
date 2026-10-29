@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skills Eval Pilot</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f23;--mut:#666b73;--line:#e3e1db;--card:#fff;--acc:#2f5d8a;--good:#2e7d4f;--avg:#b7791f;--bad:#b23b3b;--goodbg:#e6f3ea;--avgbg:#fbf0dc}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16181c;--fg:#e6e6e3;--mut:#9aa0a8;--line:#2c3036;--card:#1e2126;--acc:#7fb0e0;--good:#6cc08c;--avg:#e0b060;--bad:#e07a7a;--goodbg:#1f3328;--avgbg:#3a3020}}
+:root[data-theme="dark"]{--bg:#16181c;--fg:#e6e6e3;--mut:#9aa0a8;--line:#2c3036;--card:#1e2126;--acc:#7fb0e0;--good:#6cc08c;--avg:#e0b060;--bad:#e07a7a;--goodbg:#1f3328;--avgbg:#3a3020}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+main{max-width:960px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:22px;margin:0 0 4px}
+h2{font-size:17px;margin:32px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.sub{color:var(--mut);font-size:13px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:18px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.tile b{display:block;font-size:22px}
+.tile span{color:var(--mut);font-size:13px}
+.wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+th{font-weight:600;color:var(--mut);font-size:13px}
+td:first-child,th:first-child,td.l{text-align:left}
+tr:last-child td{border-bottom:0}
+.g{color:var(--good);background:var(--goodbg);font-weight:600}
+.a{color:var(--avg);background:var(--avgbg);font-weight:600}
+.agg{font-weight:700}
+ol,ul{padding-left:20px}
+li{margin:4px 0}
+code{font-size:13px;background:var(--line);padding:1px 4px;border-radius:3px}
+.note{color:var(--mut);font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+<h1>Skills Evaluation pilot：SkillOpt 迭代 + LLM-judge 对比</h1>
+<div class="sub">2026-10-29 · 任务：earthquake-plate-calculation、weighted-gdp-calc · agent / 优化器：qwen36-35b-a3b · judge：gpt-oss-120b</div>
+
+<div class="tiles">
+  <div class="tile"><b>0 / 6</b><span>SkillOpt 候选被接受（两任务各 3 次全拒，停链）</span></div>
+  <div class="tile"><b>2/20 · 0/20</b><span>s0（skill-creator）成功率：earthquake · gdp</span></div>
+  <div class="tile"><b>2/5 · 2/5</b><span>human skill 成功率：earthquake · gdp</span></div>
+  <div class="tile"><b>+0.2</b><span>SkillNet 均分 human − s0（满分 2，两任务相同）</span></div>
+</div>
+
+<h2>1. SkillOpt 迭代结果</h2>
+<div class="wrap"><table>
+<tr><th>版本</th><th>earthquake 成功</th><th>earthquake 测试通过比例</th><th>gdp 成功</th><th>gdp 测试通过比例</th></tr>
+<tr><td>s0 训练 rollout（3 轮 × 5）</td><td>2/15</td><td>0.68 / 0.55 / 0.93</td><td>0/15</td><td>0.54 / 0.54 / 0.53</td></tr>
+<tr><td>s0 验证</td><td>0/5</td><td>0.73</td><td>0/5</td><td>0.53</td></tr>
+<tr><td>s1_rej1</td><td>0/5</td><td>0.73</td><td>0/5</td><td>0.52</td></tr>
+<tr><td>s1_rej2</td><td>0/5</td><td>0.73</td><td>0/5</td><td>0.50</td></tr>
+<tr><td>s1_rej3</td><td>0/5</td><td>0.55</td><td>0/5</td><td>0.52</td></tr>
+</table></div>
+<ul>
+  <li><b>soft 门控没有用</b>：这两个任务的 verifier reward 是全对才给 1 的二值，平均 reward 和通过数一样，一直是 0 对 0 平局。</li>
+  <li><b>候选改动基本不改变行为</b>：按单个测试的通过比例算，候选和 s0 也几乎一样。</li>
+  <li><b>失败集中在固定位置</b>：earthquake 约 80% 的运行卡在 <code>test_distance_within_tolerance</code>；gdp 每次都是同一批 Step2/Step3 数值测试（27 个里 13–14 个）失败。</li>
+</ul>
+
+<h2>2. LLM-judge：human vs skill-creator（s0）</h2>
+<div class="sub" style="margin-bottom:8px">SkillNet 原版 evaluator，5 维 Good / Average / Poor → 2 / 1 / 0；每个 skill 采样 3 次取中位数，括号内为 3 次原始结果（G/A）。</div>
+<div class="wrap"><table>
+<tr><th>任务 · 版本</th><th>Safety</th><th>Completeness</th><th>Executability</th><th>Maintainability</th><th>Cost awareness</th><th>均分</th><th>实测成功</th></tr>
+<tr><td>earthquake · human<br><span class="sub">geospatial-analysis，7.5k 字符</span></td><td class="g">2</td><td class="g">2</td><td class="g">2</td><td class="g">2</td><td class="g">2</td><td class="agg">2.0</td><td>2/5</td></tr>
+<tr><td>earthquake · s0<br><span class="sub">geospatial-plate-analysis-skill，4.2k</span></td><td class="g">2</td><td class="g">2</td><td class="g">2</td><td class="g">2</td><td class="a">1<br><span class="sub">A G A</span></td><td class="agg">1.8</td><td>2/20</td></tr>
+<tr><td>gdp · human<br><span class="sub">通用 xlsx skill，10.6k</span></td><td class="a">1<br><span class="sub">A A G</span></td><td class="g">2<br><span class="sub">G A G</span></td><td class="g">2</td><td class="g">2</td><td class="g">2<br><span class="sub">G G A</span></td><td class="agg">1.8</td><td>2/5</td></tr>
+<tr><td>gdp · s0<br><span class="sub">weighted-gdp-calc-skill，7.2k</span></td><td class="g">2</td><td class="a">1<br><span class="sub">A G A</span></td><td class="g">2</td><td class="a">1<br><span class="sub">G A A</span></td><td class="g">2</td><td class="agg">1.6</td><td>0/20</td></tr>
+</table></div>
+
+<h2>3. 结论</h2>
+<ol>
+  <li><b>排序方向对</b>：两个任务都是 human 分数更高、实测也更好。</li>
+  <li><b>差距太小</b>：只差 0.2 分（满分 2），几乎全是 Good，天花板明显；降档也不是 3 次一致。</li>
+  <li><b>扣分维度和真实失败原因对不上</b>：earthquake 的 s0 只在 cost awareness 低一档，实际失败是距离精度；gdp 的 s0 被扣 completeness（没处理缺失值等边界），实际失败是统计量算错。human 的 xlsx skill 因可能覆盖文件被扣 safety，但成功率更高。</li>
+  <li><b>SkillNet 五维都不检查方法本身是否正确</b>：公式写错但写得规整的 skill 也能拿满分，这正是 V2（gap-based A–G）要补的地方。</li>
+</ol>
+<p class="note">仅 2 任务 × 2 版本，只能看方向，不能当证据。数据：<code>~/code/skills_eval/runs/judge_skillnet_human_s0.jsonl</code>，<code>runs/skillopt/&lt;task&gt;/*.csv</code>。</p>
+
+<h2>4. 待决定</h2>
+<ul>
+  <li>SkillOpt 下一步：A 换强优化器（qwen35-397b-a17b 等）+ 关门控保留 s1–s4；B 只关门控；C 改跑 CoEvoSkills。</li>
+  <li>是否加测试通过比例作为第三个成功指标。</li>
+  <li>是否用 V1/V2 rubric 给这 4 个 skill 打分，并把 6 个被拒候选也纳入 judge 对比（检验 judge 稳定性）。</li>
+</ul>
+</main>
+</body>
+</html>
