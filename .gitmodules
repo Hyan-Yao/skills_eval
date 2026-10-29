@@ -1,0 +1,15 @@
+[submodule "SkillOpt"]
+	path = SkillOpt
+	url = https://github.com/microsoft/SkillOpt.git
+[submodule "CoEvoSkills"]
+	path = CoEvoSkills
+	url = https://github.com/Zhang-Henry/CoEvoSkills.git
+[submodule "skillsbench"]
+	path = skillsbench
+	url = https://github.com/benchflow-ai/skillsbench.git
+[submodule "SkillNet"]
+	path = SkillNet
+	url = https://github.com/zjunlp/SkillNet.git
+[submodule "anthropic-skills"]
+	path = anthropic-skills
+	url = https://github.com/anthropics/skills.git

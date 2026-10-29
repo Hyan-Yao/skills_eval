@@ -1,6 +1,6 @@
 # Upstream repositories
 
-Cloned 2026-10-28 into this directory and ignored by git. To reproduce, `git clone` the URL and check out the pinned commit.
+Cloned 2026-10-28 and tracked as git submodules at the commits below; `git clone --recursive` checks them out.
 
 | Dir | URL | Pinned commit | Commit date |
 |---|---|---|---|

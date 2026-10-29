@@ -1,11 +1,6 @@
-SkillOpt/
-CoEvoSkills/
-skillsbench/
 runs/
 __pycache__/
 *.pyc
 .env
-SkillNet/
 .venv/
-anthropic-skills/
 .cache/

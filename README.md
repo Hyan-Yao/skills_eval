@@ -21,11 +21,11 @@ The agent and the optimizer are `qwen36-35b-a3b`; the judge is `gpt-oss-120b`. B
 | `reports/` | Result write-ups (`pilot-2026-10-29.html`). |
 | `REPOS.md` | Upstream repositories and pinned commits. |
 
-Upstream clones (`SkillOpt/`, `CoEvoSkills/`, `skillsbench/`, `SkillNet/`, `anthropic-skills/`) and all outputs (`runs/`) are git-ignored.
+Upstream repositories (`SkillOpt/`, `CoEvoSkills/`, `skillsbench/`, `SkillNet/`, `anthropic-skills/`) are git submodules pinned to the commits in `REPOS.md`. Outputs (`runs/`) are git-ignored.
 
 ## Setup
 
-1. Clone the upstream repositories into the repo root at the commits listed in `REPOS.md`.
+1. Clone with submodules: `git clone --recursive https://github.com/Hyan-Yao/skills_eval.git` (or `git submodule update --init` in an existing clone).
 2. Install Docker and make sure the current user can reach the Docker socket.
 3. Install BenchFlow: `uv tool install benchflow` (tested with `bench` 0.7.11).
 4. Create the Python environment (Python 3.11):
