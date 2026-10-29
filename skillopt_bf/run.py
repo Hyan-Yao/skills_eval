@@ -49,8 +49,8 @@ optimizer:
   slow_update_samples: {k} # meta-skill comparison batch = K items (served from finished runs of those skills)
   use_meta_skill: true
 evaluation:
-  use_gate: true           # SkillOpt gate: candidate hard score must strictly beat the current one
-  gate_metric: hard
+  use_gate: true           # SkillOpt gate: candidate score must strictly beat the current one
+  gate_metric: {gate_metric}  # soft = mean verifier reward (partial credit); hard = pass count
   sel_env_num: {sel}
   test_env_num: 0
   eval_test: false
@@ -129,6 +129,7 @@ def main():
     ap.add_argument("--workers", type=int, default=0, help="parallel rollouts (default max(K, S))")
     ap.add_argument("--out-root")
     ap.add_argument("--skills-out", default=str(ROOT / "runs/skills"), help="where exported skill packs go")
+    ap.add_argument("--gate-metric", default="soft", choices=["soft", "hard"])
     ap.add_argument("--export-only", action="store_true")
     a = ap.parse_args()
 
@@ -145,7 +146,8 @@ def main():
         cfg.write_text(CONFIG.format(base=SKILLOPT / "configs/_base_/default.yaml", model=MODEL,
                                      epochs=a.target * a.max_attempts, k=a.k, sel=a.sel, target=a.target,
                                      max_attempts=a.max_attempts, skill_init=packs[0], out_root=out_root,
-                                     task=a.task, skill_pack=pack, workers=a.workers or max(a.k, a.sel)))
+                                     task=a.task, skill_pack=pack, workers=a.workers or max(a.k, a.sel),
+                                     gate_metric=a.gate_metric))
         sys.path[:0] = [str(SKILLOPT / "scripts"), str(ROOT)]
         import train  # SkillOpt/scripts/train.py
         from skillopt_bf.adapter import BenchFlowAdapter, StopChain
