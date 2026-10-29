@@ -2,6 +2,8 @@
 # Run one SkillsBench task with Qwen (qwen-code agent, ASU endpoint) and a given skills dir.
 #   pipeline/run_task.sh <task_id> <skills_dir|none> <jobs_dir>
 # Verified 2026-10-28: 3d-scan-calc + human skill -> reward 1.0 in 5.3 min.
+# Machine-wide cap: at most $MAX_CONTAINERS (default 10) runs at once across all callers;
+# a run waits for a free slot (flock on runs/.slots/slotN, held until bench exits).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TASK=$1; SKILLS=$2; JOBS=$3
@@ -10,4 +12,13 @@ set -a; . "$HOME/workspace/jarvis/.secrets/asu_llm.env"; set +a
 args=(--tasks-dir "$ROOT/skillsbench/tasks/$TASK" --jobs-dir "$JOBS" --agent qwen-code
       --model "vllm/$MODEL" --agent-env "BENCHFLOW_PROVIDER_BASE_URL=$OPENAI_BASE_URL" --sandbox docker)
 if [ "$SKILLS" = none ]; then args+=(--skill-mode no-skill); else args+=(--skill-mode with-skill --skills-dir "$SKILLS"); fi
-exec bench eval run "${args[@]}"
+
+mkdir -p "$ROOT/runs/.slots"
+while :; do
+  for i in $(seq 1 "${MAX_CONTAINERS:-10}"); do
+    exec 9>"$ROOT/runs/.slots/slot$i"
+    if flock -n 9; then exec bench eval run "${args[@]}"; fi
+    exec 9>&-
+  done
+  sleep 10
+done

@@ -1,11 +1,18 @@
 """SkillOpt environment adapter that rolls out SkillsBench tasks through BenchFlow.
 
 One SkillOpt run optimizes the skill of a single task. Its "dataset" is K copies of that
-task (``<task>__r<i>``); every rollout is a fresh BenchFlow trial (qwen-code agent, Docker)
-with the candidate SKILL.md mounted alongside the rest of the s0 skill pack.
+task for training (``<task>__r<i>``) and S copies for the selection gate (``<task>__v<i>``);
+every rollout is a fresh BenchFlow trial (qwen-code agent, Docker) with the candidate SKILL.md
+mounted alongside the rest of the s0 skill pack.
 
-Rollouts are cached by (sha256(skill), item id), so the meta-skill comparison at an epoch
-boundary reuses the step rollouts of the same skill instead of re-running Docker trials.
+Rollouts are cached under (sha256(skill), tag). Step training rollouts and selection
+evaluations get their own tag (always fresh runs, so a retried step sees new trajectories);
+any other rollout of an already-run skill (the meta-skill comparison at an epoch boundary)
+reuses existing runs of that skill instead of starting new Docker trials.
+
+Chain control: the trainer runs one step per epoch. Before a step's training rollout the
+adapter reads history.json and raises StopChain once ``target`` versions were accepted or
+``max_attempts`` consecutive attempts were rejected.
 """
 from __future__ import annotations
 
@@ -102,12 +109,31 @@ def verifier_summary(rollout_dir: Path) -> str:
     return "\n".join(out)
 
 
-class TaskCopiesLoader(BaseDataLoader):
-    """K identical items for one task; every batch is the full item list."""
+class StopChain(Exception):
+    """Raised to end the SkillOpt run once the version chain is complete or stuck."""
 
-    def __init__(self, task: str, k: int):
+
+ACCEPT = {"accept", "accept_new_best", "force_accept"}
+
+
+def chain_state(history):
+    """(accepted versions, consecutive failed attempts since the last acceptance)."""
+    accepted = streak = 0
+    for h in history:
+        if h.get("action") in ACCEPT:
+            accepted, streak = accepted + 1, 0
+        else:
+            streak += 1
+    return accepted, streak
+
+
+class TaskCopiesLoader(BaseDataLoader):
+    """K training and S selection copies of one task; every batch is the full item list."""
+
+    def __init__(self, task: str, k: int, s: int = 0):
         self.train_items = [{"id": f"{task}__r{i}", "task": task, "task_type": task} for i in range(k)]
-        self.val_items, self.test_items = [], []
+        self.val_items = [{"id": f"{task}__v{i}", "task": task, "task_type": task} for i in range(s)]
+        self.test_items = []
 
     def get_train_size(self):
         return len(self.train_items)
@@ -117,18 +143,20 @@ class TaskCopiesLoader(BaseDataLoader):
                          batch_size=len(self.train_items), payload=list(self.train_items))
 
     def build_eval_batch(self, env_num, split, seed, **kwargs):
-        return BatchSpec(phase="eval", split=split, seed=seed, batch_size=0, payload=[])
+        items = list(self.val_items) if split in ("valid_seen", "selection", "val") else []
+        return BatchSpec(phase="eval", split=split, seed=seed, batch_size=len(items), payload=items)
 
 
 class BenchFlowAdapter(EnvAdapter):
-    def __init__(self, task: str = "", k: int = 4, skill_pack: str = "", workers: int = 4,
-                 analyst_workers: int = 4, failure_only: bool = False, minibatch_size: int = 4,
-                 edit_budget: int = 4) -> None:
+    def __init__(self, task: str = "", k: int = 5, s: int = 5, target: int = 4, max_attempts: int = 3,
+                 skill_pack: str = "", workers: int = 5, analyst_workers: int = 4,
+                 failure_only: bool = False, minibatch_size: int = 5, edit_budget: int = 4) -> None:
         self.task, self.k, self.workers = task, int(k), int(workers)
+        self.target, self.max_attempts = int(target), int(max_attempts)
         self.skill_pack = Path(skill_pack)
         self.analyst_workers, self.failure_only = analyst_workers, failure_only
         self.minibatch_size, self.edit_budget = minibatch_size, edit_budget
-        self.dataloader = TaskCopiesLoader(task, self.k)
+        self.dataloader = TaskCopiesLoader(task, self.k, int(s))
         self.body = task_body(task)
 
     def setup(self, cfg):
@@ -143,34 +171,61 @@ class BenchFlowAdapter(EnvAdapter):
         return list(self.dataloader.build_train_batch(batch_size, seed).payload)
 
     def build_eval_env(self, env_num, split, seed, **kwargs):
-        return []
+        return list(self.dataloader.build_eval_batch(env_num, split, seed).payload)
 
     def get_task_types(self):
         return [self.task]
 
     # ── rollout ────────────────────────────────────────────────────────────
 
+    def _tag(self, out: Path):
+        """Fresh-run tag for step training / selection / baseline rollouts, None for reusable ones."""
+        parts = out.parts
+        if "steps" in parts:
+            step = parts[parts.index("steps") + 1]
+            if out.name == "rollout":
+                return f"{step}_train"
+            if out.name == "selection_eval":
+                return f"{step}_sel"
+        if out.name == "selection_eval_baseline":
+            return "baseline_sel"
+        return None
+
+    def _check_chain(self):
+        hist = self.out_root / "history.json"
+        accepted, streak = chain_state(json.loads(hist.read_text()) if hist.exists() else [])
+        if accepted >= self.target or streak >= self.max_attempts:
+            raise StopChain(f"accepted={accepted} consecutive_failed={streak}")
+
     def rollout(self, env_manager, skill_content, out_dir, **kwargs):
         items = list(env_manager or [])
         out = Path(out_dir)
+        tag = self._tag(out)
+        if tag and tag.endswith("_train"):
+            self._check_chain()
         (out / "predictions").mkdir(parents=True, exist_ok=True)
         h = hashlib.sha256(skill_content.encode()).hexdigest()[:16]
+        if tag:
+            dirs = [self.cache / h / tag / it["id"] for it in items]
+        else:  # reuse any finished runs of this skill, run the shortfall fresh
+            done = sorted(p.parent for p in (self.cache / h).glob("*/*/result.json"))
+            dirs = (done + [self.cache / h / "extra" / it["id"] for it in items])[: len(items)]
         with ThreadPoolExecutor(self.workers) as pool:
-            results = list(pool.map(lambda it: self._one(it, skill_content, h, out), items))
+            results = list(pool.map(lambda p: self._one(p[0], p[1], skill_content, h, out), zip(items, dirs)))
         (out / "rollouts.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))
         with open(out / "rewards.csv", "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["id", "skill_hash", "reward", "hard", "error", "rollout_dir"])
+            w.writerow(["id", "skill_hash", "reward", "hard", "error", "rollout_dir", "cache_dir"])
             for r in results:
-                w.writerow([r["id"], h, r["soft"], r["hard"], r.get("error", ""), r.get("rollout_dir", "")])
+                w.writerow([r["id"], h, r["soft"], r["hard"], r.get("error", ""), r.get("rollout_dir", ""), r["cache_dir"]])
         return results
 
-    def _one(self, item, skill_content, h, out):
+    def _one(self, item, cdir, skill_content, h, out):
         iid = item["id"]
-        cdir = self.cache / h / iid
         if not (cdir / "result.json").exists():
             self._run(skill_content, h, cdir)
         res = json.loads((cdir / "result.json").read_text())
+        res["cache_dir"] = str(cdir)
         pdir = out / "predictions" / iid
         pdir.mkdir(parents=True, exist_ok=True)
         shutil.copy(cdir / "conversation.json", pdir / "conversation.json")
@@ -180,7 +235,7 @@ class BenchFlowAdapter(EnvAdapter):
         cdir.mkdir(parents=True, exist_ok=True)
         pack_root = self.cache / h / "skills"
         if not pack_root.exists():
-            tmp = self.cache / h / f"skills.tmp{cdir.name}"
+            tmp = self.cache / h / f"skills.tmp-{cdir.parent.name}-{cdir.name}"
             shutil.copytree(self.skill_pack, tmp / self.skill_pack.name, dirs_exist_ok=True)
             (tmp / self.skill_pack.name / "SKILL.md").write_text(skill_content)
             try:
