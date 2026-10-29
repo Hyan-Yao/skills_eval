@@ -1,10 +1,11 @@
 # 8 tasks chosen 2026-10-28 from SkillsBench v1.1 official per-task results (Opus 4.8 / MiniMax M3 / Gemini 3.5 Flash):
 # skill gain >= +0.33, agent timeout <= 900s, 1-2 human skills, spread across 6 domains.
 earthquake-plate-calculation
-dialogue-parser
+# dialogue-parser
 weighted-gdp-calc
-dapt-intrusion-detection
-threejs-structure-parser
-sales-pivot-analysis
-llm-prefix-cache-replay
-pptx-reference-formatting
+# dapt-intrusion-detection
+# threejs-structure-parser
+# sales-pivot-analysis
+# llm-prefix-cache-replay
+# pptx-reference-formatting
+# 2026-10-28: pilot narrowed to the 2 tasks the human skill solved in round 1; 5 runs per version.
